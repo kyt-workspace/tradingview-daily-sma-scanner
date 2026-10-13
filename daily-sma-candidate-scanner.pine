@@ -1,0 +1,86 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © KY_View
+
+//@version=6
+indicator("Daily SMA Candidate Scanner", overlay=false)
+
+// Settings
+nearPct = input.float(3.0, "Near SMA threshold (%)", minval=0.1, step=0.1)
+confirmedOnly = input.bool(true, "Use last completed daily candle")
+
+// Daily data
+[dayClose, dayHigh, dayLow, sma50, sma100, sma150, sma200] = request.security(
+    syminfo.tickerid, "1D",
+    [
+        confirmedOnly ? close[1] : close,
+        confirmedOnly ? high[1] : high,
+        confirmedOnly ? low[1] : low,
+        confirmedOnly ? ta.sma(close, 50)[1] : ta.sma(close, 50),
+        confirmedOnly ? ta.sma(close, 100)[1] : ta.sma(close, 100),
+        confirmedOnly ? ta.sma(close, 150)[1] : ta.sma(close, 150),
+        confirmedOnly ? ta.sma(close, 200)[1] : ta.sma(close, 200)
+    ],
+    gaps=barmerge.gaps_off,
+    lookahead=barmerge.lookahead_off
+)
+
+// Distance from each SMA (%)
+dist50  = not na(sma50)  ? (dayClose - sma50) / sma50 * 100 : na
+dist100 = not na(sma100) ? (dayClose - sma100) / sma100 * 100 : na
+dist150 = not na(sma150) ? (dayClose - sma150) / sma150 * 100 : na
+dist200 = not na(sma200) ? (dayClose - sma200) / sma200 * 100 : na
+
+abs50  = math.abs(dist50)
+abs100 = math.abs(dist100)
+abs150 = math.abs(dist150)
+abs200 = math.abs(dist200)
+
+// Nearest SMA distance and identity
+nearestDist = math.min(math.min(abs50, abs100), math.min(abs150, abs200))
+
+nearestSMA = nearestDist == abs50  ? 50  :
+             nearestDist == abs100 ? 100 :
+             nearestDist == abs150 ? 150 : 200
+
+// Daily candle intersects an SMA
+touch50  = not na(sma50)  and dayLow <= sma50  and dayHigh >= sma50
+touch100 = not na(sma100) and dayLow <= sma100 and dayHigh >= sma100
+touch150 = not na(sma150) and dayLow <= sma150 and dayHigh >= sma150
+touch200 = not na(sma200) and dayLow <= sma200 and dayHigh >= sma200
+
+touchCount = (touch50 ? 1 : 0) +
+             (touch100 ? 1 : 0) +
+             (touch150 ? 1 : 0) +
+             (touch200 ? 1 : 0)
+
+touchedAny = touchCount > 0
+
+// Count valid SMAs within the proximity threshold
+nearCount = ((not na(abs50)  and abs50  <= nearPct ? 1 : 0) +
+             (not na(abs100) and abs100 <= nearPct ? 1 : 0) + 
+             (not na(abs150) and abs150 <= nearPct ? 1 : 0) + 
+             (not na(abs200) and abs200 <= nearPct ? 1 : 0))
+
+// 1. Proximity: 0-50 points
+proximityScore = not na(nearestDist) ?
+     50.0 * math.max(0.0, 1.0 - nearestDist / nearPct) : 0.0
+
+// 2. Interaction: 0 or 30 points
+interactionScore = touchedAny ? 30.0 : 0.0
+
+// 3. Confluence: 0-20 points
+// 0 nearby SMAs = 0; 1 = 0; 2 = 10; 3 or 4 = 20
+confluenceScore = math.min(math.max(nearCount - 1, 0), 2) * 10.0
+
+// Final score, capped at 100
+priorityScore = math.min(
+    proximityScore + interactionScore + confluenceScore,
+    100.0
+)
+
+// Five Pine Screener columns
+plot(priorityScore, "Priority Score")
+plot(nearestDist, "Nearest SMA Distance %")
+plot(nearestSMA, "Nearest SMA (50/100/150/200)")
+plot(touchedAny ? 1 : 0, "Any SMA Touched")
+plot(touchCount, "SMA Touch Count")
